@@ -1,0 +1,20 @@
+{
+  "name": "agrotrace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "mobile",
+    "shared"
+  ],
+  "scripts": {
+    "bootstrap": "npm install --workspaces",
+    "dev:backend": "npm --workspace backend run dev",
+    "start:backend": "npm --workspace backend start",
+    "dev:mobile": "npm --workspace mobile run start",
+    "build": "npm -ws run build",
+    "lint": "npm -ws run lint || echo 'lint not configured'",
+    "format": "npm -ws run format || echo 'format not configured'"
+  }
+}
+

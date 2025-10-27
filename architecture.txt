@@ -1,0 +1,572 @@
+# AgroTrace System Architecture
+
+## 🏗️ High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                         │
+│                         END USERS & CLIENTS                             │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │   Farmers    │  │  Evaluators  │  │   Managers   │  │  Consumers │ │
+│  │   (Mobile)   │  │   (Mobile)   │  │     (Web)    │  │    (Web)   │ │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬─────┘ │
+│         │                 │                 │                 │        │
+└─────────┼─────────────────┼─────────────────┼─────────────────┼────────┘
+          │                 │                 │                 │
+          │                 │                 │                 │
+┌─────────┼─────────────────┼─────────────────┼─────────────────┼────────┐
+│         │                 │                 │                 │        │
+│         ▼                 ▼                 ▼                 ▼        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │                MOBILE APP (React Native + Expo)                 │  │
+│  │                                                                  │  │
+│  │  Features:                                                       │  │
+│  │  • Offline-First with WatermelonDB                              │  │
+│  │  • Voice Recording (98 languages)                               │  │
+│  │  • Photo Capture with GPS                                       │  │
+│  │  • QR Code Scanning                                             │  │
+│  │  • Farm Visit Management                                        │  │
+│  │  • Automatic Background Sync                                    │  │
+│  │                                                                  │  │
+│  └──────────────────────────┬───────────────────────────────────────┘  │
+│                             │                                          │
+│                             │ HTTPS/GraphQL                            │
+│                             │                                          │
+│  ┌──────────────────────────▼───────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │            API GATEWAY (NestJS + GraphQL + REST)                │  │
+│  │                                                                  │  │
+│  │  • Authentication (JWT via Keycloak)                            │  │
+│  │  • Rate Limiting                                                │  │
+│  │  • Request Validation                                           │  │
+│  │  • API Documentation (Swagger)                                  │  │
+│  │                                                                  │  │
+│  └──┬──────────┬──────────┬──────────┬──────────┬──────────┬───────┘  │
+│     │          │          │          │          │          │          │
+│     ▼          ▼          ▼          ▼          ▼          ▼          │
+│  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐         │
+│  │ Auth │  │Groups│  │Visits│  │Media │  │Trans-│  │Trace-│         │
+│  │  &   │  │  &   │  │  &   │  │Upload│  │crip- │  │abili-│         │
+│  │Users │  │Perms │  │Rubric│  │ &    │  │tion  │  │ty &  │         │
+│  │      │  │      │  │      │  │Store │  │      │  │  QR  │         │
+│  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘         │
+│     │         │         │         │         │         │              │
+│     └─────────┴─────────┴─────────┴─────────┴─────────┘              │
+│                             │                                         │
+│                             ▼                                         │
+│                    ┌─────────────────┐                                │
+│                    │  Message Queue  │                                │
+│                    │   (RabbitMQ)    │                                │
+│                    └─────────────────┘                                │
+│                             │                                         │
+└─────────────────────────────┼─────────────────────────────────────────┘
+                              │
+                              │
+┌─────────────────────────────┼─────────────────────────────────────────┐
+│                             │                                         │
+│                             ▼                                         │
+│                    EXTERNAL AI/API SERVICES                           │
+│                                                                       │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  OpenAI Whisper  │  │   PlantNet API   │  │  USDA FoodData   │   │
+│  │  ──────────────  │  │  ──────────────  │  │  ──────────────  │   │
+│  │  Voice → Text    │  │  Image → Species │  │  Crop → Nutrition│   │
+│  │  98 Languages    │  │  100M+ Samples   │  │  Free Database   │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+                              │
+                              │
+┌─────────────────────────────┼─────────────────────────────────────────┐
+│                             │                                         │
+│                             ▼                                         │
+│                     DATA & STORAGE LAYER                              │
+│                                                                       │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │     MongoDB      │  │      Redis       │  │  MinIO (S3)      │   │
+│  │  ──────────────  │  │  ──────────────  │  │  ──────────────  │   │
+│  │  • Users         │  │  • Sessions      │  │  • Photos        │   │
+│  │  • Farms         │  │  • Cache         │  │  • Videos        │   │
+│  │  • Visits        │  │  • Job Queue     │  │  • Audio Files   │   │
+│  │  • Products      │  │  • Pub/Sub       │  │  • Documents     │   │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘   │
+│                                                                       │
+│  ┌──────────────────┐  ┌──────────────────┐                          │
+│  │   PostgreSQL     │  │     Superset     │                          │
+│  │  ──────────────  │  │  ──────────────  │                          │
+│  │  • Keycloak DB   │  │  • Analytics     │                          │
+│  │  • Auth Data     │  │  • Reports       │                          │
+│  └──────────────────┘  └──────────────────┘                          │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+## 📱 Mobile App Data Flow (Offline-First)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        USER ACTION                             │
+│              (Record Voice, Take Photo, etc.)                  │
+└───────────────────────────┬────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│                   LOCAL WATERMELONDB                           │
+│                  (SQLite on Device)                            │
+│                                                                │
+│  Tables:                                                       │
+│  • users, farms, visits                                        │
+│  • voice_recordings, photos                                    │
+│  • planting_events, product_batches                            │
+│  • sync_queue                                                  │
+│                                                                │
+│  Status: ✅ SAVED IMMEDIATELY (works offline)                  │
+└───────────────────────────┬────────────────────────────────────┘
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │  SYNC QUEUE   │
+                    │  (Pending)    │
+                    └───────┬───────┘
+                            │
+                            │ Wait for internet...
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │  NETWORK?     │
+                    │  ┌──────┐     │
+                    │  │ Yes  │     │
+                    │  └──┬───┘     │
+                    └─────┼─────────┘
+                          │
+                          ▼
+┌────────────────────────────────────────────────────────────────┐
+│                  SYNC SERVICE ACTIVATED                        │
+│                                                                │
+│  1. Pull Changes:  Backend → Local DB                         │
+│  2. Push Changes:  Local DB → Backend                         │
+│  3. Media Upload:  Files → MinIO                              │
+│  4. Conflict Resolution: Last-write-wins                       │
+│                                                                │
+└───────────────────────────┬────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│                 BACKEND PROCESSING                             │
+│                                                                │
+│  • Transcribe voice recordings (Whisper)                      │
+│  • Identify plant species (PlantNet)                          │
+│  • Calculate environmental metrics                            │
+│  • Generate QR codes                                          │
+│  • Update analytics                                           │
+│                                                                │
+└───────────────────────────┬────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│              RESULTS SYNCED BACK TO DEVICE                     │
+│                                                                │
+│  Status: ✅ SYNCHRONIZED                                       │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## 🎤 Voice Recording Pipeline
+
+```
+User Press Record
+      │
+      ▼
+┌─────────────────┐
+│  Audio Capture  │
+│   (Expo AV)     │
+│                 │
+│  • High Quality │
+│  • m4a Format   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Save to Device  │
+│ Local Storage   │
+│                 │
+│ /voice/rec_*.m4a│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ WatermelonDB    │
+│ voice_recordings│
+│                 │
+│ Status: pending │
+└────────┬────────┘
+         │
+         │ When Online
+         ▼
+┌─────────────────┐
+│ Upload to MinIO │
+│ Object Storage  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Transcription   │
+│ Service         │
+│                 │
+│ Whisper AI      │
+│ (98 languages)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Save Results    │
+│                 │
+│ transcription   │
+│ confidence      │
+│ language        │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Sync to Device  │
+│                 │
+│ Status:completed│
+└─────────────────┘
+```
+
+## 📸 Plant Identification Flow
+
+```
+User Takes Photo
+      │
+      ▼
+┌─────────────────┐
+│  Camera Capture │
+│ (Vision Camera) │
+│                 │
+│  • High Res     │
+│  • GPS Tagged   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Save to Device  │
+│ + Geolocation   │
+│                 │
+│ lat/long saved  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ WatermelonDB    │
+│ photos table    │
+│                 │
+│ Status: pending │
+└────────┬────────┘
+         │
+         │ When Online
+         ▼
+┌─────────────────┐
+│ Upload to MinIO │
+│ Compress + Store│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  PlantNet API   │
+│                 │
+│ Image → Species │
+│ Confidence %    │
+│ Common Names    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Save Results    │
+│ species_data    │
+│ - Scientific    │
+│ - Common Names  │
+│ - Family        │
+│ - Confidence    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Sync to Device  │
+│ Show results    │
+│ to user         │
+└─────────────────┘
+```
+
+## 🔐 Authentication Flow
+
+```
+User Opens App
+      │
+      ▼
+    ┌───┐
+    │ ? │ Token exists?
+    └─┬─┘
+      │
+      ├─ NO ──────────┐
+      │               │
+      │               ▼
+      │         ┌──────────┐
+      │         │  Login   │
+      │         │  Screen  │
+      │         └────┬─────┘
+      │              │
+      │              ▼
+      │         ┌──────────┐
+      │         │ Keycloak │
+      │         │  OAuth   │
+      │         └────┬─────┘
+      │              │
+      │              ▼
+      │         ┌──────────┐
+      │         │   JWT    │
+      │         │  Token   │
+      │         └────┬─────┘
+      │              │
+      ▼              │
+┌──────────┐        │
+│ Validate │◄───────┘
+│  Token   │
+└────┬─────┘
+     │
+     ├─ VALID ──────► ┌──────────┐
+     │                 │   App    │
+     │                 │  Home    │
+     │                 └──────────┘
+     │
+     └─ INVALID ────► Logout / Re-login
+```
+
+## 📊 QR Code Traceability Chain
+
+```
+Farm Data Collection
+      │
+      ├─ Visits & Evaluations
+      ├─ Voice Recordings (farmer stories)
+      ├─ Photos (plants, conditions)
+      ├─ Planting Events (tree count)
+      │
+      ▼
+Aggregate Farm Metrics
+      │
+      ├─ Agroforestry Score
+      ├─ Biodiversity Index
+      ├─ Carbon Sequestered
+      ├─ Water Conservation
+      │
+      ▼
+Create Product Batch
+      │
+      ├─ Harvest Date
+      ├─ Crop Type
+      ├─ Quantity
+      │
+      ▼
+Calculate Impact
+      │
+      ├─ Environmental Metrics
+      ├─ Nutrition Data (USDA API)
+      ├─ Supply Chain Journey
+      │
+      ▼
+Generate QR Code
+      │
+      └─► URL: agrotrace.app/trace/[batch-id]
+            │
+            │
+Consumer Scans QR ─────► Public Trace Page
+                              │
+                              ├─ Farm Story
+                              ├─ Farmer Name & Photo
+                              ├─ Location Map
+                              ├─ Growing Practices
+                              ├─ Environmental Impact
+                              ├─ Nutrition Facts
+                              └─ Journey Timeline
+```
+
+## 🔄 Sync Protocol (WatermelonDB)
+
+```
+App Initialization
+      │
+      ▼
+┌──────────────────┐
+│  Check Network   │
+└────────┬─────────┘
+         │
+    ┌────┴────┐
+    │         │
+OFFLINE   ONLINE
+    │         │
+    │         ▼
+    │   ┌──────────────────┐
+    │   │  Pull Changes    │
+    │   │  from Backend    │
+    │   │                  │
+    │   │  GET /sync/pull  │
+    │   │  ?since=timestamp│
+    │   └────────┬─────────┘
+    │            │
+    │            ▼
+    │   ┌──────────────────┐
+    │   │ Apply Changes    │
+    │   │ to Local DB      │
+    │   │                  │
+    │   │ • Insert new     │
+    │   │ • Update changed │
+    │   │ • Delete removed │
+    │   └────────┬─────────┘
+    │            │
+    │            ▼
+    │   ┌──────────────────┐
+    │   │ Push Local       │
+    │   │ Changes          │
+    │   │                  │
+    │   │ POST /sync/push  │
+    │   │ {changes: [...]} │
+    │   └────────┬─────────┘
+    │            │
+    │            ▼
+    │   ┌──────────────────┐
+    │   │ Media Upload     │
+    │   │ (if needed)      │
+    │   │                  │
+    │   │ Photos, Audio    │
+    │   └────────┬─────────┘
+    │            │
+    └────────────┼─────────────┐
+                 │             │
+                 ▼             ▼
+         ┌──────────────────────┐
+         │  App Ready to Use    │
+         │  (All Data Current)  │
+         └──────────────────────┘
+```
+
+## 🛠️ Technology Integration Map
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     FRONTEND LAYER                          │
+│  ┌──────────────────┐  ┌──────────────────┐                │
+│  │ React Native     │  │ Next.js          │                │
+│  │ + Expo           │  │ (Web Dashboard)  │                │
+│  └────────┬─────────┘  └────────┬─────────┘                │
+│           │                     │                           │
+│           └──────────┬──────────┘                           │
+└──────────────────────┼──────────────────────────────────────┘
+                       │
+┌──────────────────────┼──────────────────────────────────────┐
+│                      │                                       │
+│   ┌──────────────────▼──────────────────┐                   │
+│   │       API LAYER (NestJS)            │                   │
+│   │  ┌──────────┐  ┌──────────┐        │                   │
+│   │  │ GraphQL  │  │   REST   │        │                   │
+│   │  │ (Apollo) │  │ (Express)│        │                   │
+│   │  └────┬─────┘  └────┬─────┘        │                   │
+│   └───────┼─────────────┼──────────────┘                   │
+│           │             │                                   │
+└───────────┼─────────────┼───────────────────────────────────┘
+            │             │
+┌───────────┼─────────────┼───────────────────────────────────┐
+│           │             │                                   │
+│   ┌───────▼─────────────▼─────────┐                         │
+│   │   BUSINESS LOGIC LAYER        │                         │
+│   │                               │                         │
+│   │  ┌─────────┐  ┌─────────┐    │                         │
+│   │  │Services │  │ Queue   │    │                         │
+│   │  │         │  │ (Bull)  │    │                         │
+│   │  └────┬────┘  └────┬────┘    │                         │
+│   └───────┼────────────┼──────────┘                         │
+│           │            │                                    │
+└───────────┼────────────┼────────────────────────────────────┘
+            │            │
+┌───────────┼────────────┼────────────────────────────────────┐
+│           │            │                                    │
+│   ┌───────▼────────────▼────────┐                           │
+│   │   INTEGRATION LAYER         │                           │
+│   │                             │                           │
+│   │  ┌──────────┐  ┌──────────┐│                           │
+│   │  │ Keycloak │  │  MinIO   ││                           │
+│   │  │  (Auth)  │  │ (Files)  ││                           │
+│   │  └──────────┘  └──────────┘│                           │
+│   │                             │                           │
+│   │  ┌──────────┐  ┌──────────┐│                           │
+│   │  │ Whisper  │  │ PlantNet ││                           │
+│   │  │  (AI)    │  │  (API)   ││                           │
+│   │  └──────────┘  └──────────┘│                           │
+│   └─────────────────────────────┘                           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+            │
+┌───────────┼─────────────────────────────────────────────────┐
+│           │                                                 │
+│   ┌───────▼────────────────────────┐                        │
+│   │     DATA PERSISTENCE           │                        │
+│   │                                │                        │
+│   │  ┌──────────┐  ┌──────────┐   │                        │
+│   │  │ MongoDB  │  │  Redis   │   │                        │
+│   │  │ (Primary)│  │ (Cache)  │   │                        │
+│   │  └──────────┘  └──────────┘   │                        │
+│   │                                │                        │
+│   │  ┌──────────┐                 │                        │
+│   │  │Postgres  │                 │                        │
+│   │  │(Keycloak)│                 │                        │
+│   │  └──────────┘                 │                        │
+│   └────────────────────────────────┘                        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 📦 Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      DOCKER HOST                            │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │                 Docker Network                       │   │
+│  │                 (agrotrace-network)                  │   │
+│  │                                                      │   │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐    │   │
+│  │  │  Backend   │  │  MongoDB   │  │   Redis    │    │   │
+│  │  │  (NestJS)  │  │  :27017    │  │   :6379    │    │   │
+│  │  │  :3001     │  └────────────┘  └────────────┘    │   │
+│  │  └────────────┘                                     │   │
+│  │                                                      │   │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐    │   │
+│  │  │ Keycloak   │  │ PostgreSQL │  │   MinIO    │    │   │
+│  │  │  :8080     │  │  :5432     │  │  :9000/01  │    │   │
+│  │  └────────────┘  └────────────┘  └────────────┘    │   │
+│  │                                                      │   │
+│  │  ┌────────────┐  ┌────────────┐                     │   │
+│  │  │ RabbitMQ   │  │  Superset  │                     │   │
+│  │  │  :5672     │  │   :8088    │                     │   │
+│  │  └────────────┘  └────────────┘                     │   │
+│  │                                                      │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ External Access
+                              │
+┌─────────────────────────────▼─────────────────────────────┐
+│                    REVERSE PROXY                          │
+│                    (Nginx/Traefik)                        │
+│                                                           │
+│  • SSL Termination                                        │
+│  • Load Balancing                                         │
+│  • Rate Limiting                                          │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+```
+
+This architecture provides a complete, scalable, and production-ready system leveraging maximum open-source components!
