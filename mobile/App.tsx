@@ -1,88 +1,115 @@
-import React, { useState } from 'react'
-import { SafeAreaView, View, Text, TextInput, Button, ScrollView, Image } from 'react-native'
-import * as ImagePicker from 'expo-image-picker'
-import * as Location from 'expo-location'
-import { Audio } from 'expo-av'
-
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000'
+import React, { useEffect, useMemo, useState } from 'react'
+import { SafeAreaView, View, Text, TextInput, Button, ScrollView } from 'react-native'
+import { ApiError, apiClient } from './src/api/client'
+import { getSession, loginWithPassword, type AuthSession } from './src/auth/session'
+import { getQueuedActions, queueLocalAction, flushLocalQueue, type QueuedAction } from './src/sync/queue'
 
 export default function App() {
-  const [farmName, setFarmName] = useState('')
-  const [farmId, setFarmId] = useState<string | null>(null)
-  const [photo, setPhoto] = useState<any>(null)
-  const [voiceUri, setVoiceUri] = useState<string | null>(null)
-  const [transcript, setTranscript] = useState<string>('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [session, setSession] = useState<AuthSession | null>(getSession())
+  const [queuedCount, setQueuedCount] = useState(0)
+  const [status, setStatus] = useState('Sign in to start syncing field work.')
+  const [busy, setBusy] = useState(false)
 
-  const createFarm = async () => {
-    const res = await fetch(`${API}/farms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: 'demo-group', name: farmName }) })
-    const data = await res.json()
-    setFarmId(data.id)
+  useEffect(() => {
+    let mounted = true
+    void getQueuedActions().then((queued) => {
+      if (mounted) {
+        setQueuedCount(queued.length)
+      }
+    })
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const queuedLabel = useMemo(() => `Queued actions: ${queuedCount}`, [queuedCount])
+
+  const handleLogin = async () => {
+    setBusy(true)
+    try {
+      const nextSession = await loginWithPassword({ email, password })
+      setSession(nextSession)
+      setStatus(`Signed in as ${nextSession.user.name}`)
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setStatus(`Login failed (${error.status}): ${error.message}`)
+      } else if (error instanceof Error) {
+        setStatus(`Login failed: ${error.message}`)
+      } else {
+        setStatus('Login failed')
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const takePhoto = async (category: 'people'|'tools'|'plants'|'place_before'|'place_after') => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync()
-    if (!perm.granted) return
-    const img = await ImagePicker.launchCameraAsync({})
-    if (img.canceled) return
-    setPhoto(img.assets[0])
-    const loc = await Location.getCurrentPositionAsync({})
-    const form = new FormData()
-    form.append('file', { uri: img.assets[0].uri, name: 'photo.jpg', type: 'image/jpeg' } as any)
-    form.append('category', category)
-    if (farmId) form.append('farmId', farmId)
-    form.append('latitude', String(loc.coords.latitude))
-    form.append('longitude', String(loc.coords.longitude))
-    const res = await fetch(`${API}/photos`, { method: 'POST', body: form as any })
-    const data = await res.json()
-    console.log('uploaded photo', data)
+  const handleQueueOfflineAction = async () => {
+    const total = await queueLocalAction('Field update', {
+      queuedBy: session?.user.id ?? 'anonymous',
+      synced: false
+    })
+    setQueuedCount(total)
+    setStatus('Saved action locally. Sync will run when online.')
   }
 
-  const recordVoice = async () => {
-    const { status } = await Audio.requestPermissionsAsync()
-    if (status !== 'granted') return
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
-    const rec = new Audio.Recording()
-    await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY)
-    await rec.startAsync()
-    setTimeout(async () => {
-      await rec.stopAndUnloadAsync()
-      const uri = rec.getURI()!
-      setVoiceUri(uri)
-      const form = new FormData()
-      form.append('file', { uri, name: 'note.m4a', type: 'audio/m4a' } as any)
-      if (farmId) form.append('farmId', farmId)
-      const res = await fetch(`${API}/voice-notes`, { method: 'POST', body: form as any })
-      const data = await res.json()
-      setTranscript(data.transcript)
-    }, 4000)
+  const handleSyncNow = async () => {
+    setBusy(true)
+    try {
+      const drained = await flushLocalQueue(async (action: QueuedAction) => {
+        await apiClient.post('/sync/actions', {
+          actionId: action.id,
+          label: action.label,
+          createdAt: action.createdAt,
+          payload: action.payload ?? null
+        }, session?.accessToken)
+      })
+      setQueuedCount((value) => Math.max(0, value - drained))
+      setStatus(drained > 0 ? `Synced ${drained} queued action(s).` : 'No queued actions to sync.')
+    } catch (error) {
+      if (error instanceof Error) {
+        setStatus(`Sync failed: ${error.message}`)
+      } else {
+        setStatus('Sync failed')
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <ScrollView style={{ padding: 16 }}>
-        <Text style={{ fontSize: 24, fontWeight: 'bold' }}>AgroTrace</Text>
-        <View style={{ marginVertical: 12 }}>
-          <Text>Farm Name</Text>
-          <TextInput value={farmName} onChangeText={setFarmName} style={{ borderWidth: 1, padding: 8 }} />
-          <Button title="Create Farm" onPress={createFarm} />
-          {farmId && <Text>Farm ID: {farmId}</Text>}
+        <Text style={{ fontSize: 24, fontWeight: 'bold' }}>AgriTrace Mobile</Text>
+        <Text style={{ marginTop: 8, marginBottom: 12 }}>{status}</Text>
+
+        <View style={{ marginVertical: 12, gap: 10 }}>
+          <Text style={{ fontSize: 18, fontWeight: '600' }}>Login</Text>
+          <TextInput
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Email"
+            style={{ borderWidth: 1, padding: 10, borderRadius: 4 }}
+          />
+          <TextInput
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Password"
+            style={{ borderWidth: 1, padding: 10, borderRadius: 4 }}
+          />
+          <Button title={busy ? 'Working...' : 'Login'} onPress={handleLogin} disabled={busy} />
+          {session && <Text>Role: {session.user.role}</Text>}
         </View>
-        <View style={{ marginVertical: 12 }}>
-          <Text>Photos</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button title="People" onPress={() => takePhoto('people')} />
-            <Button title="Tools" onPress={() => takePhoto('tools')} />
-            <Button title="Plants" onPress={() => takePhoto('plants')} />
-            <Button title="Before" onPress={() => takePhoto('place_before')} />
-            <Button title="After" onPress={() => takePhoto('place_after')} />
-          </View>
-          {photo && <Image source={{ uri: photo.uri }} style={{ width: 200, height: 200 }} />}
-        </View>
-        <View style={{ marginVertical: 12 }}>
-          <Text>Voice Note</Text>
-          <Button title="Record 4s" onPress={recordVoice} />
-          {!!voiceUri && <Text>Saved: {voiceUri}</Text>}
-          {!!transcript && <Text>Transcript: {transcript}</Text>}
+
+        <View style={{ marginVertical: 12, gap: 10 }}>
+          <Text style={{ fontSize: 18, fontWeight: '600' }}>Offline Queue</Text>
+          <Text>{queuedLabel}</Text>
+          <Button title="Queue Offline Action" onPress={handleQueueOfflineAction} />
+          <Button title={busy ? 'Syncing...' : 'Sync Queue Now'} onPress={handleSyncNow} disabled={busy} />
         </View>
       </ScrollView>
     </SafeAreaView>

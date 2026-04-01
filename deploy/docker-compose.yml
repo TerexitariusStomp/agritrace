@@ -1,0 +1,226 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agritrace}
+      POSTGRES_USER: ${POSTGRES_USER:-agritrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2026-01-14T01-10-45Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-agritrace}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_please}
+    volumes:
+      - minio_data:/data
+    ports:
+      - ${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000
+      - ${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.prod
+    image: agritrace-backend:local
+    restart: unless-stopped
+    command: ["node", "dist/index.js"]
+    environment:
+      PORT: 4000
+      AGROTRACE_DB_FILE: /data/agrotrace.db
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agritrace}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-agritrace}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me}
+      TRACE_SIGNING_PRIVATE_KEY_PEM: ${TRACE_SIGNING_PRIVATE_KEY_PEM}
+      TRACE_SIGNING_PUBLIC_KEY_PEM: ${TRACE_SIGNING_PUBLIC_KEY_PEM}
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-agritrace}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change_me_please}
+      MINIO_BUCKET: ${MINIO_BUCKET:-agrotrace-media}
+      OPENFOODFACTS_BASE: ${OPENFOODFACTS_BASE:-https://world.openfoodfacts.org/api/v0}
+      PLANTNET_API_KEY: ${PLANTNET_API_KEY:-}
+      WHISPER_API_URL: ${WHISPER_API_URL:-}
+    volumes:
+      - backend_data:/data
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health | grep -q '\"ok\":true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    image: agritrace-backend:local
+    restart: unless-stopped
+    command: ["node", "dist/jobs/worker.js", "--run"]
+    environment:
+      AGROTRACE_DB_FILE: /data/agrotrace.db
+      REDIS_URL: redis://redis:6379
+      PLANTNET_API_KEY: ${PLANTNET_API_KEY:-}
+      WHISPER_API_URL: ${WHISPER_API_URL:-}
+      WHISPER_API_KEY: ${WHISPER_API_KEY:-}
+    volumes:
+      - backend_data:/data
+      - backend_uploads:/app/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  pwa:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ../pwa/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web-admin:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ../web-admin/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web-trace:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ../web-trace/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - ${NGINX_HTTP_PORT:-80}:80
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      pwa:
+        condition: service_healthy
+      web-admin:
+        condition: service_healthy
+      web-trace:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.2
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-agritrace}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-agritrace}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.74.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - ${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090
+    depends_on:
+      - cadvisor
+      - postgres-exporter
+      - redis-exporter
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change_me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - ${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  backend_data:
+  backend_uploads:
+  prometheus_data:
+  grafana_data:

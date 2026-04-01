@@ -6,6 +6,11 @@ mobile/node_modules/
 # builds
 /dist/
 /build/
+backend/dist/
+pwa/dist/
+web-admin/dist/
+web-trace/dist/
+release/
 
 # env
 .env

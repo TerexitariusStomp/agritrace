@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm --workspace backend run build
+
+      - name: Build PWA
+        run: npm --workspace pwa run build
+
+      - name: Build web admin
+        run: npm --workspace web-admin run build
+
+      - name: Build web trace
+        run: npm --workspace web-trace run build
+
+      - name: Create release bundle
+        run: bash deploy/scripts/package-release.sh "${GITHUB_REF_NAME}"
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/agritrace-${{ github.ref_name }}.tar.gz
+            release/agritrace-${{ github.ref_name }}.sha256
+          generate_release_notes: true

@@ -19,6 +19,59 @@ Quick Start
 VPS Emulator Setup
 - See `docs/VPS-EMULATOR-SETUP.md` for a step-by-step guide to run an Android emulator on a KVM VPS and expose it via WebRTC, and to run this app against it.
 
+Production VPS Deployment (Docker Compose)
+- Production stack files live under `deploy/`:
+  - `deploy/docker-compose.yml`
+  - `deploy/nginx/nginx.conf`
+  - `deploy/env/.env.example`
+  - `deploy/monitoring/prometheus.yml`
+  - `deploy/monitoring/grafana-dashboards/api-overview.json`
+  - `deploy/scripts/backup.sh`, `deploy/scripts/restore.sh`
+- Services included: `backend`, `worker`, `postgres`, `redis`, `minio`, `pwa`, `web-admin`, `web-trace`, `nginx`, plus monitoring (`prometheus`, `grafana`, exporters, `cadvisor`).
+- First-time setup:
+  - Copy env template: `cp deploy/env/.env.example deploy/env/.env`.
+  - Fill strong secrets in `deploy/env/.env` (JWT access secret, trace signing keys, DB password, MinIO password, Grafana admin password).
+  - Ensure frontend bundles exist (`pwa/dist`, `web-admin/dist`, `web-trace/dist`).
+- Validate and run:
+  - `docker compose --env-file deploy/env/.env -f deploy/docker-compose.yml config`
+  - `docker compose --env-file deploy/env/.env -f deploy/docker-compose.yml up -d`
+- Routing defaults (`nginx`):
+  - `/` -> `pwa`
+  - `/api/` -> `backend`
+  - `/admin/` -> `web-admin`
+  - `/trace/` -> `web-trace`
+  - MinIO API/console bind to `127.0.0.1` by default via `MINIO_BIND_ADDRESS` (set to `0.0.0.0` only if external access is required)
+- Monitoring:
+  - Prometheus and Grafana bind to `127.0.0.1` by default (`PROMETHEUS_BIND_ADDRESS`, `GRAFANA_BIND_ADDRESS`)
+  - Default local endpoints: `http://127.0.0.1:9090` (Prometheus), `http://127.0.0.1:3001` (Grafana)
+  - Import `deploy/monitoring/grafana-dashboards/api-overview.json` in Grafana.
+- Backups:
+  - Make scripts executable once: `chmod +x deploy/scripts/backup.sh deploy/scripts/restore.sh`
+  - Backup: `./deploy/scripts/backup.sh`
+  - Restore: `./deploy/scripts/restore.sh --force deploy/backups/<backup-file>.tar.gz`
+
+CI/CD and Release Automation
+- CI workflow: `.github/workflows/ci.yml`
+  - Runs on pushes and pull requests.
+  - Validates backend/web/mobile tests and builds.
+  - Validates deploy assets (`docker compose ... config`, backup/restore script syntax).
+- Release workflow: `.github/workflows/release.yml`
+  - Runs when a `v*` tag is pushed.
+  - Builds `backend`, `pwa`, `web-admin`, and `web-trace`.
+  - Packages deploy-ready artifacts via `deploy/scripts/package-release.sh`.
+  - Publishes release assets:
+    - `release/agritrace-<tag>.tar.gz`
+    - `release/agritrace-<tag>.sha256`
+- GitHub Pages workflow: `.github/workflows/pages.yml`
+  - Builds and deploys `pwa` as the public website.
+  - Default URL pattern: `https://<github-username>.github.io/<repo-name>/`
+- Local dry run for release bundle:
+  - `npm --workspace backend run build`
+  - `npm --workspace pwa run build`
+  - `npm --workspace web-admin run build`
+  - `npm --workspace web-trace run build`
+  - `bash deploy/scripts/package-release.sh v0.0.0-local`
+
 Examples
 - Backend on default port:
   - Ensure `mobile/.env` contains `EXPO_PUBLIC_API_URL=http://localhost:4000`.
