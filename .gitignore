@@ -33,3 +33,10 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# double-nested from running in backend CWD
+backend/backend/
+*/data/
+
+# local git worktrees
+.worktrees/
